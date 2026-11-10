@@ -5,7 +5,7 @@
   'use strict';
   // One solid colour per method, the same in the video overlay and the 3D view.
   var COLORS = { 'Ground truth': '#ffffff', 'ArcPrior-full': '#E69F00', 'LM-fitg': '#009E73',
-    'Ball3D': '#56B4E9', 'ContactArc': '#F0E442', 'SNv3D-size': '#CC79A7' };
+    'Ball3D': '#56B4E9', 'SNv3D-size': '#CC79A7' };
   // The data's world frame (x, y, z up) is left-handed, so the 3D view mirrors y to show the pitch
   // as the camera sees it.
   var MIRROR_Y = -1;
