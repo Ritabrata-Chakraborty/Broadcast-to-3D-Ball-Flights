@@ -13,6 +13,7 @@
   // ground truth has a few outlier frames.
   var MAX_STEP_M = 3;
   var BALL_RADIUS_M = 0.11;   // a size-5 ball is 22 cm across
+  var MIN_BOX_PX = 16;        // smallest drawn YOLO box, in 960 x 540 overlay pixels
 
   // Split a path at missing frames and implausible jumps; each piece has at least two points.
   function pieces(path) {
@@ -208,7 +209,7 @@
     var playBtn = el('button', { type: 'button' }, 'Pause');
     [selFlight, selView, selSetting, selShare, selStart, selEnd, selPrior].forEach(function (x) { controls.appendChild(x); });
     var toggleBox = el('div', { class: 'demo-controls' });
-    [toggle('yolo', 'YOLO boxes', true), toggle('pnl', 'Pitch lines', true), toggle('track', 'Tracked ball', true),
+    [toggle('yolo', 'YOLO boxes', true), toggle('pnl', 'PnLCalib lines', true), toggle('track', 'Tracked ball', true),
      toggle('air', '3D paths', true), toggle('ground', 'Ground tracks', false), playBtn].forEach(function (x) { toggleBox.appendChild(x); });
     var methodBox = el('div', { class: 'demo-controls' });
     var grid = el('div', { class: 'demo-grid' });
@@ -296,8 +297,17 @@
       selEnd.disabled = isPartial();
       var endText = isPartial() ? 'not used, the end is not seen' : h('end');
       var seenText = isPartial() ? ' Seen: the first ' + seenFrames() + ' of ' + clip.flight_n + ' frames; the rest is forecast (the tracked ball is shown on seen frames only).' : '';
-      info.textContent = 'Contact heights: start ' + h('start') + ' (true ' + clip.z_contact[0].toFixed(2) + ' m), end ' + endText +
+      var shown = selSetting.value === 'heads' ? 'fine-tuned YOLO and PnLCalib heads' : 'published YOLO and PnLCalib';
+      var note = selSetting.value === 'gt' ? ' (GT inputs themselves use the dataset track and camera)' : '';
+      info.textContent = 'Boxes (orange: highest score) and pitch lines: ' + shown + note + '. Contact heights: start ' + h('start') + ' (true ' + clip.z_contact[0].toFixed(2) + ' m), end ' + endText +
         ' (true ' + clip.z_contact[1].toFixed(2) + ' m). RMSE over the whole flight, capped at 10 m; unanswered frames count as 10 m.' + seenText;
+    }
+
+    // YOLO boxes and PnLCalib lines shown for the inputs in use: the published networks for GT
+    // and Real inputs, the fine-tuned heads for Real + heads ft.
+    function networks() {
+      var src = selSetting.value === 'heads' ? clip.inputs.heads : clip.inputs.real;
+      return { boxes: src.boxes, lines: src.lines };
     }
 
     function frameIndex() { return Math.min(clip.count - 1, Math.max(0, Math.floor(video.currentTime * clip.fps + 1e-3))); }
@@ -307,26 +317,21 @@
     function drawOverlay() {
       if (!clip) return;
       var k = frameIndex(), frame = clip.start + k, fi = frame - clip.flight_start;
-      var inp = clip.inputs[selSetting.value], P = clip.camera[k];
+      var inp = clip.inputs[selSetting.value], P = clip.camera[k], net = networks();
       ctx.clearRect(0, 0, 960, 540);
-      if (toggles.pnl.checked) {
+      if (toggles.pnl.checked && net.lines) {
         ctx.strokeStyle = 'rgba(0,229,255,0.85)'; ctx.lineWidth = 1.6;
-        if (inp.lines) {
-          (inp.lines.static ? inp.lines.lines : (inp.lines.lines[k] || [])).forEach(polyline);
-        } else {
-          // GT inputs: the dataset camera's pitch lines.
-          pitchLines(clip.pitch).forEach(function (pl) {
-            var pts = pl.map(function (q) { return project(P, q[0], q[1], 0); });
-            if (pts.every(function (q) { return q; })) polyline(pts);
-          });
-        }
+        (net.lines.static ? net.lines.lines : (net.lines.lines[k] || [])).forEach(polyline);
       }
-      if (toggles.yolo.checked && inp.boxes) {
-        (inp.boxes[k] || []).forEach(function (b, i) {
-          ctx.strokeStyle = i === 0 ? '#ff7f00' : 'rgba(255,255,255,0.8)'; ctx.lineWidth = i === 0 ? 2 : 1;
-          ctx.strokeRect(b[0] - 4, b[1] - 4, b[2] - b[0] + 8, b[3] - b[1] + 8);
+      if (toggles.yolo.checked && net.boxes) {
+        // Ball boxes are only a few pixels wide, so each is drawn at least MIN_BOX_PX across.
+        (net.boxes[k] || []).forEach(function (b, i) {
+          var cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
+          var w = Math.max(MIN_BOX_PX, b[2] - b[0] + 8), h = Math.max(MIN_BOX_PX, b[3] - b[1] + 8);
+          ctx.strokeStyle = i === 0 ? '#ff7f00' : 'rgba(255,255,255,0.85)'; ctx.lineWidth = i === 0 ? 2.5 : 1.2;
+          ctx.strokeRect(cx - w / 2, cy - h / 2, w, h);
           ctx.fillStyle = ctx.strokeStyle; ctx.font = '12px Inter, sans-serif';
-          ctx.fillText(b[4].toFixed(2), b[2] + 6, b[1] + 2);
+          ctx.fillText(b[4].toFixed(2), cx + w / 2 + 3, cy - h / 2 + 10);
         });
       }
       if (toggles.track.checked && fi >= 0 && fi < seenFrames() && inp.track[fi]) {
