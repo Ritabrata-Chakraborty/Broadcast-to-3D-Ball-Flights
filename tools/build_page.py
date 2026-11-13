@@ -192,7 +192,8 @@ def main() -> None:
         html = html.replace(sec, stub)
 
     assets = {}
-    for f in sorted(p for p in DEMO.iterdir() if p.is_file()):
+    demo_files = sorted(p for p in DEMO.iterdir() if p.is_file()) if DEMO.is_dir() else []
+    for f in demo_files:
         nonce = secrets.token_bytes(12)
         blob = nonce + aes.encrypt(nonce, f.read_bytes(), None)
         # Content-addressed names: a new build never reuses a name a browser may have cached.
