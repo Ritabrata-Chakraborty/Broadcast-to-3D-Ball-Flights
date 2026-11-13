@@ -1,5 +1,5 @@
 <h1 align="center">From Broadcast Video to 3D Soccer Ball Flights</h1>
-<h3 align="center">A Learned Flight Prior and a Benchmark across Input Conditions</h3>
+<h3 align="center">Learned Priors under Imperfect Observations</h3>
 
 <p align="center">
   <a href="https://scholar.google.com/citations?user=JikCewwAAAAJ&hl=en"><b>Ritabrata Chakraborty</b></a><br>
@@ -108,8 +108,8 @@ The per-fold prior and the whole-flight training share are chosen on validation 
 
 ```bibtex
 @misc{chakraborty2026broadcast3dflights,
-  title  = {From Broadcast Video to 3D Soccer Ball Flights: A Learned Flight Prior and a Benchmark
-            across Input Conditions},
+  title  = {From Broadcast Video to 3D Soccer Ball Flights: Learned Priors under Imperfect
+            Observations},
   author = {Chakraborty, Ritabrata},
   year   = {2026},
   note   = {Under review}
