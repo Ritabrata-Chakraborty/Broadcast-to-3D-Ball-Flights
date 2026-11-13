@@ -195,11 +195,19 @@ def frames_of(folder: str, method: str, fold: str) -> pd.DataFrame:
     return table
 
 
-def side_limits(flight: dict) -> tuple[float, float]:
-    """Side-view extent of a flight's ground truth: distance and height, rounded up (m)."""
+def panel_limits(flight: dict, arms: tuple) -> tuple[float, float, float, float]:
+    """Side-view limits (x0, x1, z0, z1) holding the ground truth and every arm's path, in the
+    frame of draw_qualitative (distance along the GT heading from its start), rounded out."""
     gt = flight["gt"][np.isfinite(flight["gt"][:, 0])]
-    distance = np.linalg.norm(gt[-1, :2] - gt[0, :2])
-    return float(np.ceil(distance / 2) * 2), float(np.ceil(gt[:, 2].max() + 2))
+    start, heading = gt[0, :2], gt[-1, :2] - gt[0, :2]
+    heading = heading / np.linalg.norm(heading)
+    paths = [gt] + [flight[arm][np.isfinite(flight[arm][:, 0])] for arm in arms]
+    distance = np.concatenate([(path[:, :2] - start) @ heading for path in paths])
+    height = np.concatenate([path[:, 2] for path in paths])
+    x0 = float(min(-5.0, np.floor((distance.min() - 2) / 5) * 5))
+    x1 = float(np.ceil((distance.max() + 5) / 10) * 10)
+    z1 = float(np.ceil((height.max() + 2) / 4) * 4)
+    return x0, x1, -1.0, z1
 
 
 def collect_flights(arms: dict, data_set: str = "gt_full") -> list[dict]:
@@ -251,6 +259,8 @@ def draw_set(picks: list, titles: list, arms: tuple, labels: dict, stem: str,
     F3.QUALITATIVE_TICKS = (10.0, 4.0)   # x every 10 m, y every 4 m
     F3.QUALITATIVE_TEXT = (0.5, 0.02, "center", "bottom")   # in the band below the pitch
     F3.QUALITATIVE_COMPACT = True
+    # The first arm is drawn wider underneath, so it shows where a later arm overlaps it.
+    F3.QUALITATIVE_LW = {arms[0]: (1.9, 1.4)}
     F3.QUALITATIVE_HEIGHT = (2.9, 1.8)
     F3.draw_qualitative(picks, titles, False, OUT / f"{stem}_noframes.pdf")
     if has_frames:
@@ -267,12 +277,16 @@ def write_picks(picks: list, titles: list, rank: pd.Series, arms: tuple, name: s
     print(pd.DataFrame(rows).to_string(index=False))
 
 
+FIG5_REPLACE = {2: 354, 3: 396}     # panel index -> flight (group)
+
+
 def qualitative_figure(frozen: dict, has_frames: bool) -> list[dict]:
     """Two figures on the same four broadcast flights: among flights with an apex of at least 3 m
     that ArcPrior Base, ArcPrior + heads ft (det,cal) and Grad et al. (real inputs, seed 0) all
-    answer on at least 80 % of the frames, those nearest the 25th, 50th, 75th and 100th percentile
-    of the error of ArcPrior + heads ft. Main figure: those three methods from video; supplement:
-    the same flights with GT inputs (ArcPrior Base, Grad et al.)."""
+    answer on at least 80 % of the frames, those nearest the 25th and 50th percentile of the
+    error of ArcPrior + heads ft and, by hand (FIG5_REPLACE), two flights near the 75th and 100th.
+    Main figure: those three methods from video; supplement: the same flights with GT inputs
+    (ArcPrior Base, Grad et al.)."""
     colour = {"real-base": STYLE["ArcPrior Base"][0],
               "heads-ft": STYLE["ArcPrior + heads ft (det,cal)"][0],
               "real-grad": STYLE["Grad et al."][0]}
@@ -284,26 +298,30 @@ def qualitative_figure(frozen: dict, has_frames: bool) -> list[dict]:
     arms = ("real-base", "heads-ft", "real-grad")
     picks, titles, rank, size = pick_flights(collect_flights(real), arms, "heads-ft",
                                              (25, 50, 75, 100))
-    limits = tuple(
-        (-5.0, float(np.ceil((side_limits(f)[0] + 5) / 10) * 10), -1.0,
-         float(np.ceil(side_limits(f)[1] / 4) * 4)) for f in picks)
-    F3.QUALITATIVE_LIMITS = limits
-    draw_set(picks, titles, arms, {"real-base": "ArcPrior Base (Real)",
+    # User, 2026-11-13: panels (c) and (d) replaced by the next flights nearest the 75th and
+    # 100th percentiles, in Fig. 5 and the supplement figures alike.
+    pool = {f["group"]: f for f in collect_flights(real)}
+    shown, shown_titles = list(picks), list(titles)
+    for k, group in FIG5_REPLACE.items():
+        shown[k] = pool[group]
+        shown_titles[k] = f"({'abcd'[k]}) {rank[group]:.0f}th Percentile"
+    F3.QUALITATIVE_LIMITS = tuple(panel_limits(f, arms) for f in shown)
+    draw_set(shown, shown_titles, arms, {"real-base": "ArcPrior Base (Real)",
                                    "heads-ft": "ArcPrior + Heads ft (Real)",
                                    "real-grad": "Grad et al. (Real)"}, "qualitative", has_frames)
-    write_picks(picks, titles, rank, arms, "qualitative_flights.csv")
+    write_picks(shown, shown_titles, rank, arms, "qualitative_flights.csv")
     print(f"pool: {size} flights")
     gt = {"ArcPrior-full": frozen["gt_full"]["ArcPrior base"],
           "B1": frozen["gt_full"]["Grad et al."]}
     gt_arms = ("ArcPrior-full", "B1")
     by_flight = {(f["fold"], f["half"], f["group"]): f for f in collect_flights(gt)}
-    gt_picks = [by_flight[(f["fold"], f["half"], f["group"])] for f in picks]
-    F3.QUALITATIVE_LIMITS = limits
-    draw_set(gt_picks, titles, gt_arms, {"ArcPrior-full": "ArcPrior Base (GT)",
+    gt_picks = [by_flight[(f["fold"], f["half"], f["group"])] for f in shown]
+    F3.QUALITATIVE_LIMITS = tuple(panel_limits(f, gt_arms) for f in gt_picks)
+    draw_set(gt_picks, shown_titles, gt_arms, {"ArcPrior-full": "ArcPrior Base (GT)",
                                          "B1": "Grad et al. (GT)"}, "qualitative_gt",
              has_frames)
-    write_picks(gt_picks, titles, rank, gt_arms, "qualitative_gt_flights.csv")
-    return picks
+    write_picks(gt_picks, shown_titles, rank, gt_arms, "qualitative_gt_flights.csv")
+    return shown
 
 
 # ---------------------------------------------------------------- 2D ball tracks (frames)

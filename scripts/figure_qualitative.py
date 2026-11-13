@@ -38,6 +38,7 @@ QUALITATIVE_TICKS = None
 # Arms drawn in the qualitative figure, in legend order.
 QUALITATIVE_ARMS = ("ArcPrior-full", "B1")
 QUALITATIVE_COMPACT = False
+QUALITATIVE_LW = {}                   # arm -> (side, frame) line width; default (0.9, 0.7)
 # Figure height (in) with and without the frame row.
 QUALITATIVE_HEIGHT = (3.05, 1.85)
 # Ground truth is the one dashed line, black in the frame and in the side view.
@@ -63,7 +64,8 @@ def frame_view(ax, flight: dict) -> None:
     for arm in QUALITATIVE_ARMS:
         colour, _, line = ARMS[arm]
         path_px = project(flight[arm], cam, width, height)
-        ax.plot(path_px[:, 0], path_px[:, 1], color=colour, ls=line, lw=0.7)
+        ax.plot(path_px[:, 0], path_px[:, 1], color=colour, ls=line,
+                lw=QUALITATIVE_LW.get(arm, (0.9, 0.7))[1])
     # A 16:9 crop around the track that always lies inside the frame, so every panel has the
     # same shape and size.
     ok = np.isfinite(gt_px).all(axis=1)
@@ -108,7 +110,8 @@ def draw_qualitative(picks: list, titles: list, has_frames: bool, target: Path) 
         lines = []
         for arm in QUALITATIVE_ARMS:
             colour, _, line = ARMS[arm]
-            ax.plot(*side[arm], color=colour, ls=line, lw=0.9, label=DISPLAY[arm])
+            ax.plot(*side[arm], color=colour, ls=line, lw=QUALITATIVE_LW.get(arm, (0.9, 0.7))[0],
+                    label=DISPLAY[arm])
             lines.append(f"{DISPLAY[arm]} {flight[f'{arm}_rmse']:.2f} m")
         if QUALITATIVE_COMPACT:     # one line, RMSE in legend order
             lines = ["RMSE " + " / ".join(f"{flight[f'{arm}_rmse']:.2f}"
