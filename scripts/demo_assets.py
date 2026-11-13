@@ -7,7 +7,9 @@ flight gives one clip (the flight plus PAD frames either side):
                          heads) the tracked ball, YOLO's boxes and PnLCalib's pitch lines, plus
                          each method's path for the nine (start, end) contact-height pairs
 and manifest.json. Methods: LM-fitg, Grad et al., ArcPrior Base and (video inputs) ArcPrior ft,
-each ArcPrior with every prior; "frozen" marks the fold's prior chosen on validation.
+each ArcPrior with every prior; "frozen" marks the fold's prior chosen on validation. Partial
+flights (30-90 % of the frames seen, so no end contact) keep LM-fitg and ArcPrior, per start
+height; Grad et al. does not forecast.
 Output: site/assets/demo/. Run in the ball3d env: scripts/py scripts/demo_assets.py
 """
 import argparse
@@ -29,6 +31,7 @@ WIDTH, HEIGHT = 960, 540
 PAD = 12
 LEVELS = ("true", "off", "none")
 SETTINGS = ("gt", "real", "heads")
+SHARES = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 PRIORS = {"ap:none:0:obj": "none", "ap:gauss:1:obj": "gauss",
           "ap:subspace:1:obj": "subspace1", "ap:subspace:3:obj": "subspace3"}
 # Freeze keys of the prior chosen on validation, per setting and network.
@@ -129,47 +132,63 @@ def load_predictions(pred_root: Path, fold: str) -> dict:
     """Frames and flight rows per (setting, network) for one fold; method names as in predict.py."""
     out = {}
     for setting in SETTINGS:
-        for tag in ("base", "ft", "grad"):
+        for tag in ("base", "ft", "grad", "base_part", "ft_part"):
             folder = pred_root / f"demo_{setting}" / tag
             if not (folder / f"fold_{fold}_test_flights.csv.gz").exists():
                 continue
             flights = pd.read_csv(folder / f"fold_{fold}_test_flights.csv.gz")
             frames = pd.read_csv(folder / f"fold_{fold}_test_frames.csv.gz")
-            out[(setting, tag)] = (flights[flights["share"] == 1.0], frames)
+            out[(setting, tag)] = (flights, frames)
     return out
 
 
+def entry(flights: pd.DataFrame, table: pd.DataFrame, method: str, view: int, group: int,
+          share: float, frames: np.ndarray) -> dict | None:
+    """One method's path and errors for one view-flight and share, or None if not run."""
+    row = flights[(flights["method"] == method) & (flights["view"] == view)
+                  & (flights["group"] == group) & np.isclose(flights["share"], share)]
+    if row.empty:
+        return None
+    rows = table[(table["method"] == method) & (table["view"] == view) & (table["group"] == group)]
+    if "share" in rows:
+        rows = rows[np.isclose(rows["share"], share)]
+    path = rows.set_index("file_name").reindex(frames)[["x_predicted", "y_predicted",
+                                                        "z_predicted"]]
+    row = row.iloc[0]
+    out = {"path": rounded(path.to_numpy(float) / Config.DM_PER_M),
+           "rmse": round(float(row["rmse_cap"]), 2), "coverage": round(float(row["coverage"]), 2)}
+    if share < 1.0:
+        out.update(cut=int(row["cut"]), rmse_seen=round(float(row["rmse_seen_cap"]), 2),
+                   rmse_unseen=round(float(row["rmse_unseen_cap"]), 2))
+    return out
+
+
+def method_key(tag: str, method: str) -> str:
+    if tag == "grad":
+        return "grad"
+    if method == "lm_fitg":
+        return "lm_fitg"
+    return f"{tag.removesuffix('_part')}:{PRIORS[method]}"
+
+
 def method_paths(preds: dict, setting: str, view: int, flight: int,
-                 frames: np.ndarray) -> dict:
-    """{method key: [9 entries of {path, rmse, coverage} or None]} for one view-flight."""
-    out = {}
+                 frames: np.ndarray) -> tuple[dict, dict]:
+    """Full flights: {method key: [9 (start, end) pairs]}; partial: {method key: [7 shares x 3
+    start heights]} (the end is unseen, so the end height is not used)."""
+    full, part = {}, {}
     for (name, tag), (flights, table) in preds.items():
         if name != setting:
             continue
         for method in flights["method"].unique():
-            if tag == "grad":
-                key = "grad"
-            elif method == "lm_fitg":
-                key = "lm_fitg"
+            key = method_key(tag, method)
+            if tag.endswith("_part"):
+                part[key] = [entry(flights, table, method, view, flight * 10 + start * 3, share,
+                                   frames)
+                             for share in SHARES for start in range(len(LEVELS))]
             else:
-                key = f"{tag}:{PRIORS[method]}"
-            entries = []
-            for pair in range(len(LEVELS) ** 2):
-                group = flight * 10 + pair
-                row = flights[(flights["method"] == method) & (flights["view"] == view)
-                              & (flights["group"] == group)]
-                if row.empty:
-                    entries.append(None)
-                    continue
-                rows = table[(table["method"] == method) & (table["view"] == view)
-                             & (table["group"] == group)].set_index("file_name")
-                path = rows.reindex(frames)[["x_predicted", "y_predicted", "z_predicted"]]
-                path = path.to_numpy(float) / Config.DM_PER_M
-                entries.append({"path": rounded(path),
-                                "rmse": round(float(row["rmse_cap"].iloc[0]), 2),
-                                "coverage": round(float(row["coverage"].iloc[0]), 2)})
-            out[key] = entries
-    return out
+                full[key] = [entry(flights, table, method, view, flight * 10 + pair, 1.0, frames)
+                             for pair in range(len(LEVELS) ** 2)]
+    return full, part
 
 
 def main() -> None:
@@ -217,7 +236,7 @@ def main() -> None:
             nearest = np.clip(clip_frames - a, 0, n - 1)
             cams = [camera_matrix(z["rot"][i, k], z["trans"][i, k], z["intr"][i, k],
                                   float(z["image_h"][i])) for k in range(n)]
-            inputs, methods = {}, {}
+            inputs, methods, partial = {}, {}, {}
             for setting in SETTINGS:
                 zs = data[setting]
                 j = np.where((zs["flight"] == flight) & (zs["view"] == view)
@@ -233,7 +252,8 @@ def main() -> None:
                     end: [round(float(zs[f"h_{end}"][k]), 2) if zs[f"{end}_given"][k] else None
                           for k in np.where((zs["flight"] == flight) & (zs["view"] == view))[0]]
                     for end in ("start", "end")}
-                methods[setting] = method_paths(preds, setting, view, flight, flight_frames)
+                methods[setting], partial[setting] = method_paths(preds, setting, view, flight,
+                                                                  flight_frames)
             apex = float(np.nanmax(gt[:, 2]))
             payload = {
                 "flight": flight, "percentile": chosen["percentile"], "view": view_name,
@@ -242,7 +262,8 @@ def main() -> None:
                 "flight_n": n, "apex": round(apex, 2),
                 "z_contact": [round(float(z["z_start"][i]), 2), round(float(z["z_end"][i]), 2)],
                 "levels": LEVELS, "camera": [cams[k] for k in nearest], "gt": rounded(gt),
-                "inputs": inputs, "methods": methods, "frozen": frozen,
+                "inputs": inputs, "methods": methods, "shares": SHARES, "partial": partial,
+                "frozen": frozen,
                 "pitch": {"centre": [c / Config.DM_PER_M for c in Config.LP_PITCH_CENTRE_DM],
                           "length": PITCH_LENGTH_M, "width": PITCH_WIDTH_M},
             }

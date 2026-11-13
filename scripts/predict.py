@@ -8,8 +8,9 @@ Methods (output names):
   ap:<prior>:<weight>:obj  ArcPrior: every hypothesis refined with drag, lift and sidespin and a
             prior (none / gauss / subspace = weak-direction), the lowest objective kept
 One row per view-flight, method and share seen: the capped whole-flight RMSE (E-full at share 1,
-E-part below), coverage, contact and apex errors, fit score and Omega. With --frames, share 1 also
-writes per-frame predictions in the dataset's decimetres (for the flight mAP of Grad et al.).
+E-part below), coverage, contact and apex errors, fit score and Omega. With --frames, every share
+also writes per-frame predictions in the dataset's decimetres (for the flight mAP of Grad et al.
+at share 1, and the demo).
 Output: outputs/eval/pred/<test set>/<tag>/fold_<k>_<split>_{flights,frames}.csv.gz
 Run in the snv3d env: scripts/py --env snv3d scripts/predict.py gt_full --fold 1 --split val ...
 """
@@ -282,12 +283,12 @@ def run(args: argparse.Namespace) -> None:
                     if "hypothesis" in fit:
                         row["hypothesis"] = int(fit["hypothesis"][r])
                     rows.append(row)
-                    if share == 1.0 and args.frames:
+                    if args.frames:
                         n = int(flights.n[i])
                         values = world[r, :n].numpy() * Config.DM_PER_M
                         values[~answered[r, :n].numpy()] = np.nan
                         frames.append(pd.DataFrame({
-                            "method": name, "view": int(flights.view[i]),
+                            "method": name, "share": share, "view": int(flights.view[i]),
                             "half": int(flights.half[i]), "group": int(flights.group[i]),
                             "file_name": int(flights.a[i]) + np.arange(n),
                             "x_predicted": values[:, 0], "y_predicted": values[:, 1],
