@@ -1,0 +1,35 @@
+# Local agent context and research notes
+CLAUDE.md
+CLAUDE-*.md
+.claude/
+docs/
+graphify-out/
+
+# Third-party code, data and weights (see README for sources and layout)
+external/
+third_party/
+data/
+weights/
+
+# Pipeline outputs, earlier results, scratch and the pre-clean backup
+outputs/
+results/
+temp/
+archive/
+
+# The paper (not public) and anything drawn on video frames
+CVPR_2026_Submission_Template/
+*.pdf
+
+# Project page source, local build and password (published only to gh-pages, encrypted)
+site/
+build/
+.page_password
+
+# Python and tooling
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.ipynb_checkpoints/

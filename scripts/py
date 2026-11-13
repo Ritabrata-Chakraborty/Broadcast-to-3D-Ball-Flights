@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Run Python in a project conda env with a clean PYTHONPATH (ROS Jazzy leaks python3.12 paths)
+# and no bytecode writes (keeps __pycache__ out of read-only external/, incl. joblib workers).
+# Usage: scripts/py [--env NAME] script.py args...   (default env: ball3d)
+set -euo pipefail
+ENV_NAME="ball3d"
+if [[ "${1:-}" == "--env" ]]; then ENV_NAME="$2"; shift 2; fi
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$REPO_ROOT/src:$REPO_ROOT/external/ball3d/src"
+export PYTHONDONTWRITEBYTECODE=1
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+exec "$HOME/miniforge3/envs/$ENV_NAME/bin/python" "$@"

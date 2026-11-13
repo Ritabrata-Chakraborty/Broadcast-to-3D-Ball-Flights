@@ -1,0 +1,16 @@
+# GPU environment for detection, calibration, ArcPrior training and prediction (Python 3.11).
+# Install torch for your CUDA from pytorch.org first, then: pip install -r env/snv3d-requirements.txt
+torch==2.15.0
+torchvision==0.29.2
+ultralytics==8.4.192
+numpy==2.4.6
+pandas==3.1.0
+scipy==1.17.1
+matplotlib==3.11.2
+shapely==2.2.0
+opencv-python==5.0.0.93
+lsq-ellipse==2.2.1
+PyYAML==6.0.3
+tqdm==4.70.1
+einops==0.8.1
+pytest
