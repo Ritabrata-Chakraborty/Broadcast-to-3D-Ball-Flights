@@ -197,6 +197,8 @@
     var selStart = select('Start contact height', levels.map(function (l) { return [l[0], 'Start height: ' + l[1]]; }));
     var selEnd = select('End contact height', levels.map(function (l) { return [l[0], 'End height: ' + l[1]]; }));
     var selPrior = select('ArcPrior prior', PRIORS);
+    var selShare = select('Seen part of the flight', [['1', 'Whole flight seen (end contact known)']].concat(
+      [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3].map(function (q) { return [String(q), Math.round(q * 100) + ' % seen, rest forecast']; })));
     var toggles = {};
     function toggle(key, label, on) {
       var l = el('label'), c = el('input', { type: 'checkbox' });
@@ -204,7 +206,7 @@
       toggles[key] = c; return l;
     }
     var playBtn = el('button', { type: 'button' }, 'Pause');
-    [selFlight, selView, selSetting, selStart, selEnd, selPrior].forEach(function (x) { controls.appendChild(x); });
+    [selFlight, selView, selSetting, selShare, selStart, selEnd, selPrior].forEach(function (x) { controls.appendChild(x); });
     var toggleBox = el('div', { class: 'demo-controls' });
     [toggle('yolo', 'YOLO boxes', true), toggle('pnl', 'Pitch lines', true), toggle('track', 'Tracked ball', true),
      toggle('air', '3D paths', true), toggle('ground', 'Ground tracks', false), playBtn].forEach(function (x) { toggleBox.appendChild(x); });
@@ -228,6 +230,14 @@
     var clip = null, methodChecks = {}, cache = {};
 
     function pairIndex() { return clip.levels.indexOf(selStart.value) * 3 + clip.levels.indexOf(selEnd.value); }
+    function isPartial() { return selShare.value !== '1'; }
+    function partIndex() { return clip.shares.indexOf(Number(selShare.value)) * 3 + clip.levels.indexOf(selStart.value); }
+    // Frames seen at the current share (the whole flight when it is not cut).
+    function seenFrames() {
+      if (!isPartial()) return clip.flight_n;
+      var e = entry('base');
+      return e && e.cut ? e.cut : Math.round(Number(selShare.value) * clip.flight_n);
+    }
 
     // The entry of one method for the current inputs, heights and prior (null if not run or not answered).
     function entry(key) {
@@ -236,6 +246,10 @@
         var prior = selPrior.value === 'frozen' ? clip.frozen[setting + ':' + key] : selPrior.value;
         if (!prior) return null;
         key = key + ':' + prior;
+      }
+      if (isPartial()) {
+        var part = (clip.partial[setting] || {})[key];
+        return part ? part[partIndex()] : null;
       }
       var list = ms[key];
       return list ? list[pairIndex()] : null;
@@ -259,26 +273,31 @@
         var key = (METHODS.filter(function (m) { return m[0] === n; })[0] || [])[1];
         var e = key ? entry(key) : null;
         if (key === 'ft' && selSetting.value === 'gt') return;
+        if (key === 'grad' && isPartial()) return;   // Grad et al. fit only the frames seen
         var prev = methodChecks[n] ? methodChecks[n].checked : true;
         var l = el('label'), c = el('input', { type: 'checkbox' });
         c.checked = prev; c.addEventListener('change', refresh);
         methodChecks[n] = c;
         l.appendChild(c);
         var text = n;
-        if (key) text += e && e.coverage > 0 ? ' (RMSE ' + e.rmse.toFixed(2) + ' m)' : ' (no answer)';
+        if (key && isPartial()) text += e && e.coverage > 0 ? ' (RMSE ' + e.rmse.toFixed(2) + ' m; forecast ' + e.rmse_unseen.toFixed(2) + ' m)' : ' (no answer)';
+        else if (key) text += e && e.coverage > 0 ? ' (RMSE ' + e.rmse.toFixed(2) + ' m)' : ' (no answer)';
         l.appendChild(document.createTextNode(text));
         methodBox.appendChild(l);
         var s = el('span'), sw = el('i', { class: 'swatch' });
         sw.style.background = COLORS[n]; sw.style.outline = '1px solid #8a8f96'; s.appendChild(sw); s.appendChild(document.createTextNode(n));
         legend.appendChild(s);
       });
-      var inp = clip.inputs[selSetting.value], k = pairIndex();
+      var inp = clip.inputs[selSetting.value], k = isPartial() ? clip.levels.indexOf(selStart.value) * 3 : pairIndex();
       function h(end) {
         var v = inp.heights[end][k];
         return v == null ? 'not given' : v.toFixed(2) + ' m given';
       }
-      info.textContent = 'Contact heights: start ' + h('start') + ' (true ' + clip.z_contact[0].toFixed(2) + ' m), end ' + h('end') +
-        ' (true ' + clip.z_contact[1].toFixed(2) + ' m). RMSE capped at 10 m; unanswered frames count as 10 m.';
+      selEnd.disabled = isPartial();
+      var endText = isPartial() ? 'not used, the end is not seen' : h('end');
+      var seenText = isPartial() ? ' Seen: the first ' + seenFrames() + ' of ' + clip.flight_n + ' frames; the rest is forecast (the tracked ball is shown on seen frames only).' : '';
+      info.textContent = 'Contact heights: start ' + h('start') + ' (true ' + clip.z_contact[0].toFixed(2) + ' m), end ' + endText +
+        ' (true ' + clip.z_contact[1].toFixed(2) + ' m). RMSE over the whole flight, capped at 10 m; unanswered frames count as 10 m.' + seenText;
     }
 
     function frameIndex() { return Math.min(clip.count - 1, Math.max(0, Math.floor(video.currentTime * clip.fps + 1e-3))); }
@@ -310,7 +329,7 @@
           ctx.fillText(b[4].toFixed(2), b[2] + 6, b[1] + 2);
         });
       }
-      if (toggles.track.checked && fi >= 0 && fi < clip.flight_n && inp.track[fi]) {
+      if (toggles.track.checked && fi >= 0 && fi < seenFrames() && inp.track[fi]) {
         var t = inp.track[fi];
         ctx.strokeStyle = '#ffeb3b'; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(t[0], t[1], 9, 0, 2 * Math.PI); ctx.stroke();
@@ -337,6 +356,12 @@
             var b = project(P, s.path[fi][0], s.path[fi][1], s.path[fi][2]);
             if (b) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(b[0], b[1], 4, 0, 2 * Math.PI); ctx.fill(); }
           }
+          // Partial flights: a white ring where the seen part ends and the forecast begins.
+          var last = s.path[seenFrames() - 1];
+          if (isPartial() && toggles.air.checked && last) {
+            var c = project(P, last[0], last[1], last[2]);
+            if (c) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(c[0], c[1], 6, 0, 2 * Math.PI); ctx.stroke(); }
+          }
         });
       }
       if (view && view.state.follow) followCamera(view, P, centroid(clip));
@@ -346,7 +371,7 @@
         if (gt) view.marker.position.set(gt[0], gt[1], gt[2]);
       }
       scrub.value = Math.round(100 * k / Math.max(1, clip.count - 1));
-      status.textContent = clip.view + ', frame ' + frame + (fi >= 0 && fi < clip.flight_n ? ' (in flight)' : '');
+      status.textContent = clip.view + ', frame ' + frame + (fi >= 0 && fi < clip.flight_n ? (fi < seenFrames() ? ' (in flight, seen)' : ' (in flight, forecast)') : '');
     }
 
     function refresh() {
@@ -355,7 +380,13 @@
       drawOverlay();
     }
 
-    function rebuild() { if (clip) { buildMethods(); refresh(); } }
+    function rebuild() {
+      if (!clip) return;
+      // Clips without partial-flight data offer the whole flight only.
+      selShare.style.display = clip.shares ? '' : 'none';
+      if (!clip.shares) selShare.value = '1';
+      buildMethods(); refresh();
+    }
 
     async function loadClip() {
       var f = selFlight.value, v = selView.value || flights[f][0].view, name = f + '_' + v;
@@ -373,7 +404,7 @@
     }
     selFlight.addEventListener('change', function () { fillViews(); loadClip(); });
     selView.addEventListener('change', loadClip);
-    [selSetting, selStart, selEnd, selPrior].forEach(function (s) { s.addEventListener('change', rebuild); });
+    [selSetting, selShare, selStart, selEnd, selPrior].forEach(function (s) { s.addEventListener('change', rebuild); });
     ['yolo', 'pnl', 'track'].forEach(function (k) { toggles[k].addEventListener('change', drawOverlay); });
     ['air', 'ground'].forEach(function (k) { toggles[k].addEventListener('change', refresh); });
     playBtn.addEventListener('click', function () { if (video.paused) { video.play(); playBtn.textContent = 'Pause'; } else { video.pause(); playBtn.textContent = 'Play'; } });
