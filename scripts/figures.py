@@ -268,10 +268,11 @@ def write_picks(picks: list, titles: list, rank: pd.Series, arms: tuple, name: s
 
 
 def qualitative_figure(frozen: dict, has_frames: bool) -> list[dict]:
-    """Main figure: real inputs only, ArcPrior Base, ArcPrior + heads ft
-    (det,cal) and Grad et al. (seed 0), the flights nearest the 25th, 50th, 75th and 90th
-    percentile of ArcPrior + heads ft. Supplement: GT inputs, ArcPrior Base and Grad et al., the
-    25th-100th percentile of ArcPrior Base, worst case included."""
+    """Two figures on the same four broadcast flights: among flights with an apex of at least 3 m
+    that ArcPrior Base, ArcPrior + heads ft (det,cal) and Grad et al. (real inputs, seed 0) all
+    answer on at least 80 % of the frames, those nearest the 25th, 50th, 75th and 100th percentile
+    of the error of ArcPrior + heads ft. Main figure: those three methods from video; supplement:
+    the same flights with GT inputs (ArcPrior Base, Grad et al.)."""
     colour = {"real-base": STYLE["ArcPrior Base"][0],
               "heads-ft": STYLE["ArcPrior + heads ft (det,cal)"][0],
               "real-grad": STYLE["Grad et al."][0]}
@@ -282,10 +283,11 @@ def qualitative_figure(frozen: dict, has_frames: bool) -> list[dict]:
             "real-grad": frozen["real_full"]["Grad et al."]}
     arms = ("real-base", "heads-ft", "real-grad")
     picks, titles, rank, size = pick_flights(collect_flights(real), arms, "heads-ft",
-                                             (25, 50, 75, 90))
-    F3.QUALITATIVE_LIMITS = tuple(
+                                             (25, 50, 75, 100))
+    limits = tuple(
         (-5.0, float(np.ceil((side_limits(f)[0] + 5) / 10) * 10), -1.0,
          float(np.ceil(side_limits(f)[1] / 4) * 4)) for f in picks)
+    F3.QUALITATIVE_LIMITS = limits
     draw_set(picks, titles, arms, {"real-base": "ArcPrior Base (Real)",
                                    "heads-ft": "ArcPrior + Heads ft (Real)",
                                    "real-grad": "Grad et al. (Real)"}, "qualitative", has_frames)
@@ -294,17 +296,13 @@ def qualitative_figure(frozen: dict, has_frames: bool) -> list[dict]:
     gt = {"ArcPrior-full": frozen["gt_full"]["ArcPrior base"],
           "B1": frozen["gt_full"]["Grad et al."]}
     gt_arms = ("ArcPrior-full", "B1")
-    gt_picks, gt_titles, gt_rank, gt_size = pick_flights(collect_flights(gt), gt_arms,
-                                                         "ArcPrior-full", (25, 50, 75, 100))
-    # Side-view limits of the GT-input figure: x from -5 m to 45 / 60 / 20 / 30 m.
-    tops = [side_limits(f)[1] for f in gt_picks]
-    tops[1], tops[2] = 20.0, 4.0
-    F3.QUALITATIVE_LIMITS = tuple((-5.0, x1, -1.0, z1) for x1, z1 in zip((45, 60, 20, 30), tops))
-    draw_set(gt_picks, gt_titles, gt_arms, {"ArcPrior-full": "ArcPrior Base (GT)",
-                                            "B1": "Grad et al. (GT)"}, "qualitative_gt",
+    by_flight = {(f["fold"], f["half"], f["group"]): f for f in collect_flights(gt)}
+    gt_picks = [by_flight[(f["fold"], f["half"], f["group"])] for f in picks]
+    F3.QUALITATIVE_LIMITS = limits
+    draw_set(gt_picks, titles, gt_arms, {"ArcPrior-full": "ArcPrior Base (GT)",
+                                         "B1": "Grad et al. (GT)"}, "qualitative_gt",
              has_frames)
-    write_picks(gt_picks, gt_titles, gt_rank, gt_arms, "qualitative_gt_flights.csv")
-    print(f"pool: {gt_size} flights")
+    write_picks(gt_picks, titles, rank, gt_arms, "qualitative_gt_flights.csv")
     return picks
 
 
@@ -444,12 +442,17 @@ def track_panels(flights: list[dict], titles: list[str], target: Path) -> None:
 
 def track_figures(picks: list[dict]) -> None:
     """2D ball tracks on video frames: the four broadcast flights of the qualitative figure, and
-    flight (a) in static cameras 01-05. Holds LP frames: never commit."""
+    the first of them seen by all static cameras 01-05. Holds LP frames: never commit."""
     flights = [flight_tracks(p["fold"], 0, p["half"], p["group"]) for p in picks]
     titles = [f"({letter}) Broadcast" for letter in "abcd"]
     track_panels(flights, titles, OUT / "tracks_broadcast.pdf")
-    pick = picks[0]
-    static = [flight_tracks(pick["fold"], v, pick["half"], pick["group"]) for v in range(1, 6)]
+    # The first of the four flights that every static camera 01-05 sees.
+    for pick in picks:
+        static = [flight_tracks(pick["fold"], v, pick["half"], pick["group"])
+                  for v in range(1, 6)]
+        if all(f is not None for f in static):
+            break
+    print("static tracks: flight", pick["group"])
     static_titles = [f"Camera {v:02d}" for v, f in zip(range(1, 6), static) if f is not None]
     track_panels([f for f in static if f is not None], static_titles, OUT / "tracks_static.pdf")
     rows = [{"figure": fig, "view": f["view"], "half": f["half"], "group": f["group"],
